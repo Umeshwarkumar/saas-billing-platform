@@ -78,6 +78,53 @@ The following features are fully implemented and verified in the codebase:
   - **Auth Required:** Yes
   - **Allowed Role:** `Customer`
   - **Purpose:** Change an active subscription to a new plan (upgrade/downgrade).
+- `PUT /api/subscriptions/:id/cancel`
+  - **Auth Required:** Yes
+  - **Allowed Role:** Any authenticated user (Customers can only cancel their own)
+  - **Purpose:** Cancel an active subscription. Access remains valid until the `currentPeriodEnd` (grace period). Does not delete the document.
+- `POST /api/subscriptions/:id/apply-coupon`
+  - **Auth Required:** Yes
+  - **Allowed Role:** `Customer`
+  - **Purpose:** Apply an active coupon to a subscription to discount the generated invoices.
+
+### Usage Metering
+- `POST /api/usage`
+  - **Auth Required:** Yes
+  - **Allowed Role:** Any authenticated user
+  - **Purpose:** Log a usage event for a subscription.
+- `GET /api/usage/:subscriptionId`
+  - **Auth Required:** Yes
+  - **Allowed Role:** Any authenticated user (Customers can only view their own)
+  - **Purpose:** Retrieve usage records for a specific subscription.
+
+### Invoices
+- `POST /api/invoices/generate`
+  - **Auth Required:** Yes
+  - **Allowed Role:** `Billing Admin`
+  - **Purpose:** Generate an invoice for a given subscription's current billing period, including base plan price and metered usage. Prevents duplicates per billing period.
+- `PUT /api/invoices/:id/pay`
+  - **Auth Required:** Yes
+  - **Allowed Role:** Any authenticated user
+  - **Purpose:** Transition invoice status. A successful payment transitions `pending`/`failed` to `paid` and records `paidAt`. A failed payment transitions to `failed` and increments `retryCount`.
+- `POST /api/invoices/:id/retry`
+  - **Auth Required:** Yes
+  - **Allowed Role:** `Billing Admin`
+  - **Purpose:** Retry payment for a failed invoice. Simulates dunning workflow by incrementing `retryCount`. If `retryCount` exceeds 3, the associated subscription is transitioned to `suspended`.
+
+### Customers
+- `GET /api/customers/:id/dashboard`
+  - **Auth Required:** Yes
+  - **Allowed Role:** Any authenticated user (Customers can only view their own)
+  - **Purpose:** Aggregate current plan, latest usage summary, and invoice history into a single response.
+
+### Admin
+- `GET /api/admin/reports/revenue`
+  - **Auth Required:** Yes
+  - **Allowed Role:** `Billing Admin`
+  - **Purpose:** Generate revenue reports for the current month.
+  - **Formulas Used:**
+    - **MRR (Monthly Recurring Revenue):** Sum of `plan.price` for all active monthly subscriptions + sum of `plan.price / 12` for all active yearly subscriptions.
+    - **Churn Rate:** `(Cancelled subscriptions within the period) / (Active subscriptions at the start of the period) * 100`.
 
 ---
 
@@ -107,6 +154,33 @@ Stores active customer subscriptions and tracks plan changes.
 - `currentPeriodStart` (Date)
 - `currentPeriodEnd` (Date)
 - `prorationNotes` (Array of Strings)
+
+### UsageRecord
+Stores metered usage events for a subscription.
+- `subscriptionId` (ObjectId ref Subscription, Indexed)
+- `metric` (String)
+- `quantity` (Number, Min 0)
+- `periodStart` (Date)
+- `periodEnd` (Date)
+
+### Invoice
+Stores generated invoices for subscription billing periods.
+- `subscriptionId` (ObjectId ref Subscription, Indexed)
+- `amount` (Number, Min 0)
+- `status` (String, Enum: `['pending', 'paid', 'failed']`)
+- `periodStart` (Date)
+- `periodEnd` (Date)
+- `dueDate` (Date)
+- `paidAt` (Date)
+- `retryCount` (Number)
+
+### Coupon
+Stores reusable discount coupons for subscriptions.
+- `code` (String, Unique)
+- `type` (String, Enum: `['percentage', 'flat']`)
+- `value` (Number, Min 0)
+- `expiryDate` (Date)
+- `active` (Boolean)
 
 ---
 
@@ -204,8 +278,17 @@ JWT_EXPIRES_IN=1d
 - [x] Subscription Plan Management
 - [x] Subscription Creation Workflow
 - [x] Plan Upgrade/Downgrade Logic
+- [x] Usage Metering Records (Module 1)
+- [x] Invoice Generation Engine (Module 2)
+- [x] Payment Status Tracking (Module 3)
+- [x] Subscription Cancellation & Grace Period (Module 4)
+- [x] Coupon/Discount Application (Module 5)
+- [x] Customer Billing Dashboard (Module 6)
+- [x] Dunning/Failed Payment Workflow (Module 7)
+- [x] Admin Revenue Reports (Module 8)
+- [x] Role-Based Access Control Audit (Module 9)
 
-> **Note:** Sprint 2 (Invoicing, Payments, Cancellation) and Sprint 3 (Coupons, Dashboards, Admin Reports) are **NOT** part of this Member 1 implementation and should not be considered completed.
+> **Note:** Sprint 2 (Invoicing, Payments, Cancellation) and Sprint 3 (Coupons, Dashboards, Admin Reports) are currently being implemented.
 
 ---
 
@@ -220,3 +303,36 @@ JWT_EXPIRES_IN=1d
 - JSON Web Tokens (JWT) are used for stateless authentication and role verification.
 - Role-based authorization (`Customer` vs `Billing Admin`) is enforced strictly at the route level.
 - The `.env` file is excluded from Git to prevent accidental leakage of secrets.
+
+---
+
+## 14. RBAC Audit Trail
+
+| Endpoint | Allowed Roles | Enforcement Mechanism | Rejection Behavior |
+| :--- | :--- | :--- | :--- |
+| `POST /api/auth/register` | Public | None | N/A |
+| `POST /api/auth/login` | Public | None | N/A |
+| `GET /api/auth/me` | Customer, Billing Admin | `authenticate` | 401 if missing/invalid |
+| `GET /api/plans` | Customer, Billing Admin | `authenticate` (Controller restricts inactive for Customers) | 401 if missing/invalid |
+| `POST /api/plans` | Billing Admin | `authorize('Billing Admin')` | 403 Forbidden |
+| `PUT /api/plans/:id` | Billing Admin | `authorize('Billing Admin')` | 403 Forbidden |
+| `POST /api/subscriptions` | Customer | `authorize('Customer')` | 403 Forbidden |
+| `PUT /api/subscriptions/:id/change-plan`| Customer | `authorize('Customer')` + Controller checks ownership | 403 Forbidden |
+| `PUT /api/subscriptions/:id/cancel` | Customer, Billing Admin | `authenticate` + Controller checks ownership for Customers | 403 Forbidden |
+| `POST /api/subscriptions/:id/apply-coupon` | Customer | `authorize('Customer')` + Controller checks ownership | 403 Forbidden |
+| `POST /api/usage` | Customer, Billing Admin | `authenticate` + Controller validates active state | 401 / 409 |
+| `GET /api/usage/:subscriptionId` | Customer, Billing Admin | `authenticate` + Controller checks ownership for Customers | 403 Forbidden |
+| `POST /api/invoices/generate` | Billing Admin | `authorize('Billing Admin')` | 403 Forbidden |
+| `PUT /api/invoices/:id/pay` | Customer, Billing Admin | `authenticate` | 401 if missing/invalid |
+| `POST /api/invoices/:id/retry` | Billing Admin | `authorize('Billing Admin')` | 403 Forbidden |
+| `GET /api/customers/:id/dashboard` | Customer, Billing Admin | `authenticate` + Controller checks ownership for Customers | 403 Forbidden |
+| `GET /api/admin/reports/revenue` | Billing Admin | `authorize('Billing Admin')` | 403 Forbidden |
+
+All 403 Forbidden rejections reliably return the following standard JSON error payload:
+```json
+{
+  "success": false,
+  "message": "Forbidden. You do not have access to this resource.",
+  "errorCode": "FORBIDDEN"
+}
+```

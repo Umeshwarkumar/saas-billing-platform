@@ -1,5 +1,6 @@
 const Subscription = require('../models/Subscription');
 const Plan = require('../models/Plan');
+const Coupon = require('../models/Coupon');
 const { validationResult } = require('express-validator');
 
 const createSubscription = async (req, res, next) => {
@@ -171,7 +172,136 @@ const changePlan = async (req, res, next) => {
   }
 };
 
+const cancelSubscription = async (req, res, next) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errorCode: 'VALIDATION_ERROR',
+        errors: errors.array()
+      });
+    }
+
+    const { id } = req.params;
+    const customerId = req.user.userId;
+
+    const subscription = await Subscription.findById(id);
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        message: 'Subscription not found',
+        errorCode: 'SUBSCRIPTION_NOT_FOUND'
+      });
+    }
+
+    // Admins can cancel any, Customer can only cancel own
+    if (req.user.role === 'Customer' && subscription.customerId.toString() !== customerId) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only cancel your own subscription',
+        errorCode: 'FORBIDDEN_OWNERSHIP'
+      });
+    }
+
+    if (subscription.status === 'cancelled') {
+      return res.status(409).json({
+        success: false,
+        message: 'Subscription is already cancelled',
+        errorCode: 'ALREADY_CANCELLED'
+      });
+    }
+
+    subscription.status = 'cancelled';
+    subscription.cancelledAt = new Date();
+    await subscription.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Subscription cancelled successfully. Access remains valid until current period ends.',
+      data: subscription
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const applyCoupon = async (req, res, next) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errorCode: 'VALIDATION_ERROR',
+        errors: errors.array()
+      });
+    }
+
+    const { id } = req.params;
+    const { code } = req.body;
+    const customerId = req.user.userId;
+
+    const subscription = await Subscription.findById(id);
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        message: 'Subscription not found',
+        errorCode: 'SUBSCRIPTION_NOT_FOUND'
+      });
+    }
+
+    // Ownership check
+    if (req.user.role === 'Customer' && subscription.customerId.toString() !== customerId) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only manage your own subscription',
+        errorCode: 'FORBIDDEN_OWNERSHIP'
+      });
+    }
+
+    if (subscription.couponId) {
+      return res.status(409).json({
+        success: false,
+        message: 'A coupon is already applied to this subscription',
+        errorCode: 'COUPON_ALREADY_APPLIED'
+      });
+    }
+
+    const coupon = await Coupon.findOne({ code: code.toUpperCase() });
+    if (!coupon) {
+      return res.status(404).json({
+        success: false,
+        message: 'Coupon not found',
+        errorCode: 'COUPON_NOT_FOUND'
+      });
+    }
+
+    if (!coupon.active || new Date() > coupon.expiryDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'Coupon is expired or inactive',
+        errorCode: 'COUPON_INVALID'
+      });
+    }
+
+    subscription.couponId = coupon._id;
+    await subscription.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Coupon applied successfully',
+      data: subscription
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createSubscription,
-  changePlan
+  changePlan,
+  cancelSubscription,
+  applyCoupon
 };

@@ -17,10 +17,18 @@ app.use(express.json());
 const authRoutes = require('./routes/authRoutes');
 const planRoutes = require('./routes/planRoutes');
 const subscriptionRoutes = require('./routes/subscriptionRoutes');
+const usageRoutes = require('./routes/usageRoutes');
+const invoiceRoutes = require('./routes/invoiceRoutes');
+const customerRoutes = require('./routes/customerRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/plans', planRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
+app.use('/api/usage', usageRoutes);
+app.use('/api/invoices', invoiceRoutes);
+app.use('/api/customers', customerRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -51,13 +59,16 @@ const PORT = process.env.PORT || 5000;
 const startServer = async () => {
   try {
     await connectDB();
-    app.listen(PORT, () => {
-      console.log(`Server is running on port ${PORT}`);
-    });
+    if (process.env.NODE_ENV !== 'test') {
+      app.listen(PORT, () => {
+        console.log(`Server is running on port ${PORT}`);
+      });
+    }
   } catch (error) {
     console.error('Failed to start server due to MongoDB connection error');
-    process.exit(1);
+    if (process.env.NODE_ENV !== 'test') process.exit(1);
   }
 };
 
 startServer();
+module.exports = app;

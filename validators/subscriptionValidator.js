@@ -13,7 +13,22 @@ const changePlanRules = () => {
   ];
 };
 
+const cancelSubscriptionRules = () => {
+  return [
+    param('id').isMongoId().withMessage('Invalid Subscription ID')
+  ];
+};
+
+const applyCouponRules = () => {
+  return [
+    param('id').isMongoId().withMessage('Invalid Subscription ID'),
+    body('code').trim().notEmpty().withMessage('Coupon code is required')
+  ];
+};
+
 module.exports = {
   createSubscriptionRules,
-  changePlanRules
+  changePlanRules,
+  cancelSubscriptionRules,
+  applyCouponRules
 };

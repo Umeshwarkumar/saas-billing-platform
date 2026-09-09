@@ -15,8 +15,17 @@ const subscriptionSchema = new mongoose.Schema(
     status: {
       type: String,
       required: true,
-      enum: ['active'],
+      enum: ['active', 'cancelled', 'past_due', 'suspended'],
       default: 'active'
+    },
+    cancelledAt: {
+      type: Date,
+      default: null
+    },
+    couponId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Coupon',
+      default: null
     },
     currentPeriodStart: {
       type: Date,

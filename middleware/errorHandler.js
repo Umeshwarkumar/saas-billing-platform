@@ -2,6 +2,7 @@
  * Centralized error handling middleware
  */
 const errorHandler = (err, req, res, next) => {
+  console.error(err);
   // Safe generic response structure
   res.status(500).json({
     success: false,
