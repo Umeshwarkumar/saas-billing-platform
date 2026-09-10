@@ -7,12 +7,19 @@ This project is a backend API for a SaaS Subscription Billing platform. It enabl
 
 ---
 
-## 2. Member 1 — Completed Modules
-The following modules for Sprint 1 have been **COMPLETED**:
+## 2. Member 1 & Member 2 — Completed Modules
+
+### Sprint 1 (Member 1):
 - ✅ User Registration & Authentication
 - ✅ Subscription Plan Management
 - ✅ Subscription Creation Workflow
 - ✅ Plan Upgrade/Downgrade Logic
+
+### Sprint 2 (Member 2):
+- ✅ Usage Metering Records
+- ✅ Invoice Generation Engine
+- ✅ Payment Status Tracking & Retry Logic
+- ✅ Subscription Cancellation & Grace Period
 
 ---
 
