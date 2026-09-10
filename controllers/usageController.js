@@ -14,7 +14,7 @@ const logUsage = async (req, res, next) => {
       });
     }
 
-    const { subscriptionId, metric, quantity, periodStart, periodEnd } = req.body;
+    const { subscriptionId, metric, usageType, quantity, periodStart, periodEnd } = req.body;
 
     // Check if subscription exists
     const subscription = await Subscription.findById(subscriptionId);
@@ -23,6 +23,15 @@ const logUsage = async (req, res, next) => {
         success: false,
         message: 'Subscription not found',
         errorCode: 'SUBSCRIPTION_NOT_FOUND'
+      });
+    }
+
+    // Ownership check: Admin can view/log any, Customer can only log for their own subscription
+    if (req.user.role === 'Customer' && subscription.customerId.toString() !== req.user.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden. You do not own this subscription.',
+        errorCode: 'FORBIDDEN'
       });
     }
 
@@ -35,9 +44,11 @@ const logUsage = async (req, res, next) => {
       });
     }
 
+    const recordMetric = metric || usageType;
+
     const record = await UsageRecord.create({
       subscriptionId,
-      metric,
+      metric: recordMetric,
       quantity,
       periodStart,
       periodEnd
