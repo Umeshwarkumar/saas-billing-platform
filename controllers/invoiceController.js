@@ -2,6 +2,7 @@ const Invoice = require('../models/Invoice');
 const Subscription = require('../models/Subscription');
 const Plan = require('../models/Plan');
 const UsageRecord = require('../models/UsageRecord');
+const Coupon = require('../models/Coupon');
 const { validationResult } = require('express-validator');
 
 const generateInvoice = async (req, res, next) => {
@@ -25,6 +26,15 @@ const generateInvoice = async (req, res, next) => {
         success: false,
         message: 'Subscription not found',
         errorCode: 'SUBSCRIPTION_NOT_FOUND'
+      });
+    }
+
+    // Ownership check: Billing Admin can generate any, Customer can generate for own subscription
+    if (req.user.role === 'Customer' && subscription.customerId.toString() !== req.user.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden. You do not own this subscription.',
+        errorCode: 'FORBIDDEN'
       });
     }
 
@@ -53,26 +63,20 @@ const generateInvoice = async (req, res, next) => {
       });
     }
 
-    // Sum unbilled usage records for the period
-    // Since there's no price-per-usage specified, we'll assume a simplistic $0.10 per unit just for the demo, 
-    // or maybe the instructions just say "sum of unbilled usage records". 
-    // "sum of unbilled usage records for the period" -> we'll sum quantity and multiply by a default price per unit (e.g. 0.05).
-    // Let's use $1 per unit of usage to keep it simple, or add a comment.
+    // Sum usage records for the period
     const usageRecords = await UsageRecord.find({
       subscriptionId,
-      periodStart: { $gte: subscription.currentPeriodStart },
-      periodEnd: { $lte: subscription.currentPeriodEnd }
+      periodStart: { $gte: subscription.currentPeriodStart, $lte: subscription.currentPeriodEnd }
     });
 
     const totalUsageQuantity = usageRecords.reduce((acc, curr) => acc + curr.quantity, 0);
-    const USAGE_PRICE_PER_UNIT = 0.50; // Document this assumption
+    const USAGE_PRICE_PER_UNIT = 0.50; // Preserved project assumption
     const usageCost = totalUsageQuantity * USAGE_PRICE_PER_UNIT;
 
     let totalAmount = plan.price + usageCost;
 
     // Apply Coupon if present
     if (subscription.couponId) {
-      const Coupon = require('../models/Coupon');
       const coupon = await Coupon.findById(subscription.couponId);
       if (coupon && coupon.active && new Date() <= coupon.expiryDate) {
         if (coupon.type === 'percentage') {
@@ -132,6 +136,16 @@ const payInvoice = async (req, res, next) => {
       });
     }
 
+    // Ownership check
+    const subscription = await Subscription.findById(invoice.subscriptionId);
+    if (req.user.role === 'Customer' && subscription && subscription.customerId.toString() !== req.user.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden. You do not own this invoice.',
+        errorCode: 'FORBIDDEN'
+      });
+    }
+
     if (invoice.status === 'paid') {
       return res.status(409).json({
         success: false,
@@ -143,9 +157,20 @@ const payInvoice = async (req, res, next) => {
     if (success) {
       invoice.status = 'paid';
       invoice.paidAt = new Date();
+
+      // If subscription was past_due, reactivate it
+      if (subscription && subscription.status === 'past_due') {
+        subscription.status = 'active';
+        await subscription.save();
+      }
     } else {
       invoice.status = 'failed';
       invoice.retryCount += 1;
+
+      if (invoice.retryCount >= 3 && subscription && subscription.status !== 'suspended') {
+        subscription.status = 'suspended';
+        await subscription.save();
+      }
     }
 
     await invoice.save();
@@ -183,6 +208,16 @@ const retryInvoice = async (req, res, next) => {
       });
     }
 
+    // Ownership check
+    const subscription = await Subscription.findById(invoice.subscriptionId);
+    if (req.user.role === 'Customer' && subscription && subscription.customerId.toString() !== req.user.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden. You do not own this invoice.',
+        errorCode: 'FORBIDDEN'
+      });
+    }
+
     if (invoice.status === 'paid') {
       return res.status(409).json({
         success: false,
@@ -194,8 +229,6 @@ const retryInvoice = async (req, res, next) => {
     const MAX_RETRIES = 3;
 
     if (invoice.retryCount >= MAX_RETRIES) {
-      // Transition subscription to suspended
-      const subscription = await Subscription.findById(invoice.subscriptionId);
       if (subscription && subscription.status !== 'suspended') {
         subscription.status = 'suspended';
         await subscription.save();
@@ -208,10 +241,25 @@ const retryInvoice = async (req, res, next) => {
       });
     }
 
-    // Simulate retry (stub for actual payment gateway call)
-    // Here we assume it fails again for demonstration, or we just increment
-    // Since it's a manual retry stub, we'll increment the counter.
+    // Execute retry attempt
     invoice.retryCount += 1;
+
+    const retrySuccessful = req.body && req.body.success === true;
+    if (retrySuccessful) {
+      invoice.status = 'paid';
+      invoice.paidAt = new Date();
+      if (subscription && subscription.status === 'past_due') {
+        subscription.status = 'active';
+        await subscription.save();
+      }
+    } else {
+      invoice.status = 'failed';
+      if (invoice.retryCount >= MAX_RETRIES && subscription && subscription.status !== 'suspended') {
+        subscription.status = 'suspended';
+        await subscription.save();
+      }
+    }
+
     await invoice.save();
 
     return res.status(200).json({
@@ -229,3 +277,4 @@ module.exports = {
   payInvoice,
   retryInvoice
 };
+
